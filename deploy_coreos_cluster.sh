@@ -30,11 +30,11 @@ machines.
 }
 
 print_red() {
-  echo -e "\e[91m$1\e[0m"
+  printf '%b' "\033[91m$1\033[0m\n"
 }
 
 print_green() {
-  echo -e "\e[92m$1\e[0m"
+  printf '%b' "\033[92m$1\033[0m\n"
 }
 
 check_cmd() {
@@ -162,6 +162,7 @@ trap - EXIT
 trap
 
 OS_NAME="coreos"
+SSH_USER="core"
 
 virsh list --all --name | grep -q "^${OS_NAME}1$" && { print_red "'${OS_NAME}1' VM already exists"; exit 1; }
 
@@ -355,5 +356,31 @@ for SEQ in $(seq 1 $CLUSTER_SIZE); do
     --noautoconsole \
 #    --cpu=host
 done
+
+if [ "x${SKIP_SSH_CHECK}" = "x" ]; then
+  MAX_SSH_TRIES=50
+  for SEQ in $(seq 1 $CLUSTER_SIZE); do
+    VM_HOSTNAME="${OS_NAME}${SEQ}"
+    TRY=0
+    while true; do
+      TRY=$((TRY+1))
+      if [ $TRY -gt $MAX_SSH_TRIES ]; then
+        print_red "Can not connect to ssh, exiting..."
+        exit 1
+      fi
+      echo "Trying to connect to ${VM_HOSTNAME} VM, #${TRY} of #${MAX_SSH_TRIES}..."
+      set +e
+      RES=$(LANG=en_US ssh -l $SSH_USER -o BatchMode=yes -o ConnectTimeout=1 -o PasswordAuthentication=no -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i ${PRIV_KEY_PATH} $VM_HOSTNAME "uptime" 2>&1)
+      RES_CODE=$?
+      set -e
+      if [ $RES_CODE -eq 0 ]; then
+        break
+      else
+        echo "$RES" | grep -Eq "(refused|No such file or directory|reset by peer|closed by remote host|authentication failure|failure in name resolution|Could not resolve hostname)" && sleep 1 || true
+      fi
+    done
+  done
+  print_green "Cluster of $CLUSTER_SIZE $OS_NAME nodes is up and running."
+fi
 
 print_green "Use following command to connect to your cluster: 'ssh -i \"$PRIV_KEY_PATH\" core@$FIRST_HOST'"
